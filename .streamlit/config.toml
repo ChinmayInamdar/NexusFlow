@@ -1,24 +1,25 @@
+# .streamlit/config.toml
+
 [theme]
-# Primary accent color for interactive elements.
-primaryColor="#007bff"  # A common, pleasant blue. You can change this.
+# Primary accent color for interactive elements, buttons, active states.
+primaryColor="#007bff"
 
 # Background color for the main content area.
-backgroundColor="#F0F2F6" # A light grey, often good for dashboards.
+backgroundColor="#F0F2F6"
 
-# Background color for sidebar and most other UI elements.
-secondaryBackgroundColor="#FFFFFF" # White for a clean look.
+# Background color for sidebar and elements like cards.
+secondaryBackgroundColor="#FFFFFF"
 
 # Text color for the main content area.
-textColor="#212529" # A dark grey, good for readability.
+textColor="#212529"
 
 # Font family for all text in the app.
 # Options: "sans serif", "serif", "monospace"
 font="sans serif"
 
 [logger]
-# Level for Streamlit's own logger.
+# Level for Streamlit's own logger (not your app's logger).
 # Options: "error", "warning", "info", "debug"
-# This is separate from your application's logger configured in src/config.py
 level = "info"
 
 [server]
@@ -26,23 +27,30 @@ level = "info"
 # port = 8501
 
 # If true, will attempt to open a browser window on start.
-# browser.serverAddress = "localhost"
+# browser.serverAddress = "localhost" # Default behavior is to use localhost
 # browser.gatherUsageStats = true # Set to false to disable sending usage stats to Streamlit
-# browser.serverPort = 8501
+# browser.serverPort = 8501 # Redundant if using default port
 
 # To run headless (e.g., in a container without a browser automatically opening)
 # headless = true
 
 # To enable Cross-Origin Resource Sharing (CORS) - usually not needed for local dev
 # enableCORS = false
+# enableXsrfProtection = true # Default and recommended
 
 [client]
-# If true, show a warning when a DataFrame has more than 200k rows.
-# Changed to a higher limit as e-commerce data can be large.
-# You can adjust this based on performance.
-showWarningOnDirectExecution = true
-# maxCachedStats = 1000 # Default, controls stats caching
+# If true, show a warning when a DataFrame has more than `maxDataFrameSize` rows.
+# Streamlit has evolved its DataFrame handling. `showWarningOnDirectExecution` might be
+# less relevant now, and `maxDataFrameSize` for Arrow DataFrames is a newer concept.
+# For large data, consider pagination or summarization in your app logic.
+# showWarningOnDirectExecution = true # Keep if you find it useful
+
+# This setting is for caching of Streamlit's internal statistics about your app,
+# not directly for user-facing elements or data caching.
+# maxCachedStats = 1000 # Default
 
 [global]
-# Disable a warning about st.pyplot() global use. Not directly relevant here but common.
+# Disable a warning about st.pyplot() global use.
+# Not strictly necessary if you're not using st.pyplot directly without a figure object,
+# but good to be aware of.
 # deprecation.showPyplotGlobalUse = false

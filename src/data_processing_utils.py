@@ -2,173 +2,230 @@
 import pandas as pd
 import numpy as np
 import re
-from datetime import datetime
+from datetime import datetime, date
 from dateutil import parser
-from .config import (
-    logger, DEFAULT_UNKNOWN_CATEGORICAL, DEFAULT_UNKNOWN_NUMERIC_INT,
-    DEFAULT_UNKNOWN_NUMERIC_FLOAT, DEFAULT_STATUS_UNKNOWN
-    # GENDER_MAP, CUSTOMER_STATUS_MAP, etc. are used in etl_pipelines.py, not directly here unless a util func specifically needs one
-)
+from .config import logger, DEFAULT_UNKNOWN_CATEGORICAL # Ensure this is imported or defined
 
-def clean_string(value, case=None, default_if_empty=None):
-    """Cleans a string: strips whitespace, optionally converts case, returns default if empty."""
-    if pd.isna(value) or value is None: # Handle None explicitly
-        return default_if_empty
-    value_str = str(value).strip()
-    if not value_str: # if after stripping it's empty
-        return default_if_empty if default_if_empty is not None else None # Return None if no default
+# --- String Cleaning ---
+def clean_string(text, case=None, default_if_empty=None):
+    if pd.isna(text) or text is None:
+        return default_if_empty if default_if_empty is not None else None
+    text_str = str(text).strip()
+    if not text_str: # Empty after strip
+        return default_if_empty if default_if_empty is not None else None
     
-    if case == 'lower':
-        return value_str.lower()
-    elif case == 'upper':
-        return value_str.upper()
-    elif case == 'title':
-        # A more robust title case for names like "McDonald" or "O'Malley"
-        # This is a simple version; more complex regex might be needed for all edge cases.
-        return ' '.join(word.capitalize() for word in value_str.split())
-    return value_str
+    # Remove non-printable characters except common whitespace like \n, \r, \t
+    text_str = re.sub(r'[^\x20-\x7E\n\r\t]', '', text_str)
+    text_str = ' '.join(text_str.split()) # Normalize whitespace to single spaces
 
-def standardize_categorical(value, mapping_dict, default_value=DEFAULT_UNKNOWN_CATEGORICAL, case_transform='upper'):
-    """Standardizes categorical values using a mapping dictionary. Handles None input for mapping_dict keys."""
-    cleaned_value_for_lookup = clean_string(value, case=case_transform) # Normalize the input value
+    if case == 'lower': text_str = text_str.lower()
+    elif case == 'upper': text_str = text_str.upper()
+    elif case == 'title': text_str = text_str.title()
+    return text_str
+
+# --- Customer Name Standardization (NEW ADVANCED VERSION) ---
+def standardize_customer_name_advanced(name_str):
+    if pd.isna(name_str) or not str(name_str).strip():
+        return DEFAULT_UNKNOWN_CATEGORICAL
+
+    name = str(name_str).strip()
+
+    # Remove email-like parts (e.g., @domain.com)
+    name = re.sub(r'@\S+', '', name).strip()
     
-    if cleaned_value_for_lookup is None: # if input was NaN or empty string became None
-        # Check if None or an empty string (after transform) is a key in the map
-        if None in mapping_dict:
-            return mapping_dict[None]
-        if "" in mapping_dict and case_transform is None: # Only if no case transform happened
-             return mapping_dict[""]
-        return default_value # Default if None/empty string is not explicitly mapped
+    # Remove trailing numbers if they seem part of a username and not a suffix like "Jr III"
+    # This heuristic looks for a letter followed by numbers at the end, without a preceding space before the numbers.
+    if re.search(r'[a-zA-Z][0-9]+$', name) and not re.search(r'\s[IVX0-9]+$', name, re.IGNORECASE):
+        name = re.sub(r'[0-9]+$', '', name).strip()
 
-    return mapping_dict.get(cleaned_value_for_lookup, default_value)
+    # Replace common separators ('.', '_', '-') with a space, but not if it's part of "Jr." or "Sr."
+    # This is tricky. A simpler replacement first:
+    name = re.sub(r'[_]+', ' ', name) # Underscores are almost always separators
+    name = re.sub(r'-(?![sS][rR]$|[jJ][rR]$)', ' ', name) # Hyphens not part of Sr/Jr
+    name = re.sub(r'\.(?![jJ][rR]$|[sS][rR]$|\s|$)', ' ', name) # Periods not part of Jr./Sr. or end of sentence
 
+    # Remove extra spaces that might have been introduced
+    name = ' '.join(name.split())
 
-def parse_date_robustly(date_val, output_format='%Y-%m-%d', error_val=None):
-    """Parses various date/datetime formats and returns a string in specified format or error_val."""
-    if pd.isna(date_val) or str(date_val).strip() == '' or str(date_val).lower() == 'none':
-        return error_val
-    try:
-        # Handle potential float inputs from CSVs that represent dates as numbers (e.g. Excel dates)
-        # This is a very basic heuristic, real Excel date conversion is more complex.
-        if isinstance(date_val, (float, np.floating)):
-             if date_val > 20000 and date_val < 80000 : # Common range for Excel serial dates
-                # Assuming date_val is an Excel serial number (days since 1899-12-30)
-                dt_obj = pd.to_datetime('1899-12-30') + pd.to_timedelta(date_val, 'D')
-                return dt_obj.strftime(output_format)
-             else: # If it's a float but not in Excel date range, treat as error for date parsing
-                logger.debug(f"Float value '{date_val}' not in typical Excel date range. Returning error_val.")
-                return error_val
+    # Capitalize each part of the name (Title Case)
+    # Handle special cases like "McDonald", "O'Malley" if needed, but title() is a good start.
+    name_parts = []
+    for part in name.split():
+        if part.lower() in ["jr", "sr", "ii", "iii", "iv", "md", "phd", "dds"]:
+            name_parts.append(part.lower().capitalize() + ".") # Jr. Sr.
+        elif re.match(r"^(mc|mac|o')", part.lower()): # Mc, Mac, O'
+            if part.lower().startswith("mc") and len(part) > 2:
+                name_parts.append("Mc" + part[2:].capitalize())
+            elif part.lower().startswith("mac") and len(part) > 3:
+                name_parts.append("Mac" + part[3:].capitalize())
+            elif part.lower().startswith("o'") and len(part) > 2:
+                 name_parts.append("O'" + part[2:].capitalize())
+            else:
+                 name_parts.append(part.capitalize()) # Default for short Mc/Mac
+        else:
+            name_parts.append(part.capitalize())
+    final_name = ' '.join(name_parts)
 
-        dt_obj = parser.parse(str(date_val))
-        return dt_obj.strftime(output_format)
-    except (ValueError, TypeError, parser.ParserError) as e:
-        logger.debug(f"Date parsing failed for '{date_val}': {e}. Returning error_val.")
-        return error_val
-
-def to_numeric_safe(value, target_type=float, default_value=None):
-    """
-    Safely converts a value to a specified numeric type (float or int).
-    Removes common non-numeric characters like currency symbols.
-    """
-    if pd.isna(value) or str(value).strip().lower() in ['', 'none', 'null', 'na']: # More robust check for "empty"
-        return default_value
-    
-    s_value = str(value).strip()
+    # If after all this, the name is empty, too short, or just punctuation, return UNKNOWN
+    if not final_name or len(final_name) < 2 or final_name.count(' ') == len(final_name) -1 : 
+        return DEFAULT_UNKNOWN_CATEGORICAL
         
-    # Remove currency symbols, commas (for thousands), and other non-essential chars.
-    # Keep minus sign, decimal point, and 'e' for scientific notation.
-    s_value = re.sub(r'[^\d\.\-eE]', '', s_value)
+    return final_name
+
+
+# --- Categorical Standardization ---
+def standardize_categorical(value, mapping_dict, default_value=DEFAULT_UNKNOWN_CATEGORICAL, case_transform=None):
+    if pd.isna(value): return default_value
+    cleaned_value = str(value).strip()
+    if not cleaned_value: return default_value
     
-    # After stripping, if it's empty or just a leftover char, return default
-    if not s_value or s_value == '.' or s_value == '-':
-        return default_value
+    if case_transform == 'lower': cleaned_value = cleaned_value.lower()
+    elif case_transform == 'upper': cleaned_value = cleaned_value.upper()
     
-    try:
-        num = float(s_value) # Always parse as float first for flexibility
-        if target_type == int:
-            return int(num)
-        return num
-    except ValueError:
-        logger.debug(f"Could not convert '{value}' (cleaned: '{s_value}') to {target_type.__name__}.")
-        return default_value
+    return mapping_dict.get(cleaned_value, default_value)
 
-def standardize_boolean_strict(value,
-                               true_values={'true', 'yes', '1', 'active', 'completed', 'delivered', 't'},
-                               false_values={'false', 'no', '0', 'inactive', 'failed', 'pending', 'cancelled', 'returned', 'f'}):
-    """Standardizes various inputs to Python boolean True/False, or None if ambiguous or truly null."""
-    if pd.isna(value) or value is None: # Explicitly return None for pd.NA or np.nan or Python None
-        return None
+# --- Date Parsing ---
+def parse_date_robustly(date_str, output_format='%Y-%m-%d', errors='coerce'):
+    if pd.isna(date_str) or str(date_str).strip() == '' or str(date_str).lower() in ['na', 'none', 'null', 'unknown']:
+        return None if errors == 'coerce' else pd.NaT # Return None or NaT for consistency
     
-    s_value = str(value).strip().lower()
-    if not s_value or s_value == 'none' or s_value == 'null' or s_value == 'na': # Empty string or common null strings
-        return None
+    # Handle if it's already a datetime object (e.g., from pd.to_datetime)
+    if isinstance(date_str, (datetime, date, pd.Timestamp)):
+        try:
+            return date_str.strftime(output_format)
+        except ValueError: # If output_format is for datetime but date_str is only date
+             if isinstance(date_str, date) and not isinstance(date_str, datetime) and '%H' in output_format:
+                 # If it's a date object and output expects time, just format as date
+                 return date_str.strftime('%Y-%m-%d')
+             return None if errors == 'coerce' else pd.NaT
 
-    if s_value in true_values:
-        return True
-    if s_value in false_values:
-        return False
+
+    date_str_cleaned = str(date_str).strip()
+    # Common replacements for clarity before parsing
+    date_str_cleaned = date_str_cleaned.replace('/', '-').replace('.', '-')
     
-    # Handle direct boolean True/False input
-    if isinstance(value, bool):
-        return value
-
-    # Handle numeric representations if they weren't in true/false_values
-    try:
-        # Use a stricter check for numbers that clearly mean true/false
-        num_value = float(s_value)
-        if np.isclose(num_value, 1.0): return True
-        if np.isclose(num_value, 0.0): return False
-    except ValueError:
-        pass # Not a number, and not in string lists
-
-    logger.debug(f"Ambiguous boolean value: '{value}'. Could not map to True/False. Returning None.")
-    return None # Ambiguous
-
-def standardize_phone_strict(phone_str):
-    if pd.isna(phone_str) or str(phone_str).strip().lower() in ['', 'none', 'null']:
-        return None
-    digits = re.sub(r'\D', '', str(phone_str)) # Remove all non-digits
-    
-    if len(digits) == 10: # Standard US 10-digit
-        return f"({digits[0:3]}) {digits[3:6]}-{digits[6:10]}"
-    elif len(digits) == 11 and digits.startswith('1'): # US 11-digit with country code 1
-        return f"+1 ({digits[1:4]}) {digits[4:7]}-{digits[7:11]}"
-    elif len(digits) >= 7 and len(digits) <= 15 : # Plausible length for other formats or international numbers
-        logger.debug(f"Non-standard but plausible phone format for '{phone_str}', returning cleaned digits: {digits}")
-        return digits 
-    else: # Too short, too long, or no digits
-        logger.debug(f"Invalid or unparseable phone number '{phone_str}', returning None.")
-        return None
-
-def standardize_postal_code(code_str):
-    if pd.isna(code_str) or str(code_str).strip().lower() in ['', 'none', 'null']:
-        return None
-    
-    cleaned_code = str(code_str).strip()
-    if not cleaned_code: return None
-
-    # Try to extract a 5-digit code, or 5-4 format.
-    match_5_4 = re.match(r'^(\d{5})[-\s]?(\d{4})$', cleaned_code)
-    if match_5_4:
-        return match_5_4.group(1) # Return just the 5-digit part
-
-    match_5 = re.match(r'^(\d{5})$', cleaned_code)
-    if match_5:
-        return match_5.group(1)
-    
-    # Handle cases where zip might be float string like "12345.0"
-    if '.' in cleaned_code:
-        cleaned_code_float_part = cleaned_code.split('.')[0]
-        if re.match(r'^\d{5}$', cleaned_code_float_part):
-            return cleaned_code_float_part
+    # Try direct parsing with common formats first for speed
+    common_formats = [
+        '%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%Y-%m-%d',
+        '%m-%d-%Y %H:%M:%S', '%m-%d-%Y %H:%M', '%m-%d-%Y',
+        '%d-%m-%Y %H:%M:%S', '%d-%m-%Y %H:%M', '%d-%m-%Y',
+        '%Y%m%d', '%Y%m%d%H%M%S'
+    ]
+    for fmt in common_formats:
+        try:
+            dt_obj = datetime.strptime(date_str_cleaned, fmt)
+            return dt_obj.strftime(output_format)
+        except ValueError:
+            continue
             
-    logger.debug(f"Could not standardize postal code: '{code_str}'. Original value (cleaned): '{cleaned_code}' might be invalid or non-US.")
-    # Return the cleaned string if it has some digits and plausible length, otherwise None
-    if re.search(r'\d', cleaned_code) and len(cleaned_code) >= 3: # Basic check
-        return cleaned_code
-    return None
+    # Fallback to dateutil.parser for more flexibility
+    try:
+        # dayfirst=True can be ambiguous, try both if initial parse fails without it
+        # Try inferring based on separators or common patterns
+        dayfirst_heuristic = (date_str_cleaned.count('-') == 2 and int(date_str_cleaned.split('-')[0]) > 12) or \
+                             (date_str_cleaned.count('/') == 2 and int(date_str_cleaned.split('/')[0]) > 12)
+
+        dt_obj = parser.parse(date_str_cleaned, dayfirst=dayfirst_heuristic)
+        return dt_obj.strftime(output_format)
+    except (ValueError, TypeError, OverflowError):
+        logger.debug(f"Robust date parsing failed for: '{date_str_cleaned}' (original: '{date_str}')")
+        return None if errors == 'coerce' else pd.NaT
 
 
+# --- Numeric Conversion ---
+def to_numeric_safe(value, target_type=float, default_value=None, errors='coerce'):
+    if pd.isna(value):
+        return default_value if default_value is not None else (pd.NA if target_type == int else np.nan)
+
+    if isinstance(value, (int, float)) and not isinstance(value, bool): # bool is subclass of int
+        try:
+            return target_type(value)
+        except (ValueError, TypeError):
+            return default_value if default_value is not None else (pd.NA if target_type == int else np.nan)
+
+    s_val = str(value).strip()
+    if not s_val or s_val.lower() in ['na', 'none', 'null', 'unknown', '#n/a', 'nan']:
+        return default_value if default_value is not None else (pd.NA if target_type == int else np.nan)
+
+    # Remove common currency symbols, commas, percentage signs
+    s_val = re.sub(r'[$,]', '', s_val)
+    is_percentage = '%' in s_val
+    s_val = s_val.replace('%', '')
+    
+    try:
+        num = float(s_val)
+        if is_percentage:
+            num /= 100.0
+        
+        if target_type == int:
+            if np.isnan(num): # Handle if float conversion results in NaN
+                 return default_value if default_value is not None else pd.NA
+            return int(round(num)) # Round before int conversion
+        return num # target_type is float or implicitly handled
+    except (ValueError, TypeError):
+        if errors == 'coerce':
+            return default_value if default_value is not None else (pd.NA if target_type == int else np.nan)
+        else:
+            raise
+
+# --- Boolean Standardization ---
+def standardize_boolean_strict(value, true_values=None, false_values=None, default_if_unknown=None):
+    if true_values is None:
+        true_values = {'true', 'yes', '1', 't', 'y', 'on', 'active'}
+    if false_values is None:
+        false_values = {'false', 'no', '0', 'f', 'n', 'off', 'inactive'}
+
+    if pd.isna(value): return default_if_unknown
+    
+    val_str = str(value).strip().lower()
+    if not val_str: return default_if_unknown # Empty string
+
+    if val_str in true_values: return True
+    if val_str in false_values: return False
+    
+    # Try converting to numeric if it looks like a number but wasn't in true/false sets
+    try:
+        num_val = float(val_str)
+        if num_val == 1.0: return True
+        if num_val == 0.0: return False
+    except ValueError:
+        pass # Not a number
+
+    return default_if_unknown
+
+# --- Phone Number Standardization ---
+def standardize_phone_strict(phone_str, default_if_invalid=None):
+    if pd.isna(phone_str): return default_if_invalid
+    cleaned = re.sub(r'\D', '', str(phone_str)) # Remove all non-digits
+    
+    if len(cleaned) == 10: # Standard US 10-digit
+        return f"({cleaned[0:3]}) {cleaned[3:6]}-{cleaned[6:10]}"
+    elif len(cleaned) == 11 and cleaned.startswith('1'): # US 11-digit with country code
+        return f"+1 ({cleaned[1:4]}) {cleaned[4:7]}-{cleaned[7:11]}"
+    # Add more rules for other formats or lengths if needed
+    
+    # If it doesn't match known valid formats after cleaning, return default
+    logger.debug(f"Phone number '{phone_str}' (cleaned: '{cleaned}') did not match strict formats.")
+    return default_if_invalid
+
+# --- Postal Code Standardization ---
+def standardize_postal_code(postal_code_str, country='US', default_if_invalid=None):
+    if pd.isna(postal_code_str): return default_if_invalid
+    pc_str = str(postal_code_str).strip()
+    
+    if country == 'US':
+        pc_str = re.sub(r'[^0-9]', '', pc_str) # Remove non-digits
+        if len(pc_str) == 5:
+            return pc_str
+        elif len(pc_str) == 9: # ZIP+4
+            return f"{pc_str[:5]}-{pc_str[5:]}"
+    # Add rules for other countries if needed
+    # elif country == 'CA': ...
+
+    logger.debug(f"Postal code '{postal_code_str}' (cleaned: '{pc_str}') did not match {country} format.")
+    return default_if_invalid
+
+# --- Timestamp ---
 def get_current_timestamp_str():
     return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
