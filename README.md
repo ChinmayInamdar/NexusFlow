@@ -2,6 +2,10 @@
 
 NexusFlow is an intelligent data integration and analytics platform designed to ingest, clean, reconcile, and analyze data from disparate sources. It leverages AI (Google Gemini) for schema mapping suggestions and provides a Streamlit-based user interface for managing the ETL (Extract, Transform, Load) process and visualizing the unified data.
 
+<p align="center">
+  <img src="./nexusflow.png" alt="NexusFlow" width="600"/>
+</p>
+
 The system is built to handle common data challenges such as messy customer records, inconsistent product information, and unstructured order data, transforming them into a clean, unified dataset ready for business intelligence.
 
 ## ✨ Key Features
