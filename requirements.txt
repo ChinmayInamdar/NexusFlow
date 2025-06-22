@@ -1,0 +1,9 @@
+pandas
+numpy
+sqlalchemy
+streamlit
+plotly
+python-dateutil
+google-generativeai
+streamlit-option-menu
+bcrypt
