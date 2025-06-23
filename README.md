@@ -103,6 +103,10 @@ The system is built to handle common data challenges such as messy customer reco
 
 ## 📋 Usage Workflow
 
+<p align="center">
+  <img src="./des.jpeg" alt="NexusFlow" width="600"/>
+</p>
+
 1.  **Home Page (`app.py` & `00_Home.py`):**
     *   Provides an overview of the application and quick stats from the database.
 
